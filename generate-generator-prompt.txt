@@ -1,0 +1,28 @@
+You are given stats and examples of a DB table from production. Write typescript code that generates mock data that resembles as closely as possible production data using this information. Note that the "most common values" likely not necessarily cover the whole range so use your imagination. Also note that the distributions do not contain information about correlations between columns. Make sure column values only appear in combinations that logically seem to make sense, use your intelligence.
+Add comments with reasons for decisions you made (esp when they were made due to a specific input info/stat).
+If the table has any foreign keys, you can assume those other tables already exist. Fetch related keys from that table with the given pool so the rows can actually be inserted
+
+make sure you follow the following interface in your main function
+
+// import this type as import { Config } from '../../utils';
+type Config = {
+    /** use this pg pool to get values for foreign key relations and to insert the rows */
+    pool: pg.Pool;
+    /** a value between 0 and 1 that specifies how many rows to generate, with 1 meaning "around as many as are on prod" (see estimated row count) */
+    prodFraction: number;
+    /** if given, for any time based columns, use these start and end dates. if not given, use reasonable values based on given stats */
+    startDate?: Date;
+    endDate?: Date;
+}
+export async function generate(
+    config: Config
+): Promise<YourChoice[]> {
+    ...
+}
+
+export async function insert(
+    config: Config,
+    generated: YourChoice[]
+): Promise<void> {
+    ...
+}
