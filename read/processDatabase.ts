@@ -6,6 +6,7 @@ import { generateTableStatistics } from "./tableInfo";
 import { TableDetails, DatabaseMetadata } from "./index";
 import { isExcludedSchema } from "./constants";
 import { Config } from "../config";
+import { getTableUniqueIndexes } from "./constraints";
 
 interface ProcessOptions {
   specificSchema?: string;
@@ -61,6 +62,11 @@ export async function processDatabase(
         rowCount,
       } = await generateTableStatistics(config.pool, schema_name, table_name);
 
+      const uniqueIndexes = await getTableUniqueIndexes(
+        config.pool,
+        table.schema_name,
+        table.table_name
+      );
       // Write SQL to file
       const sqlFileName = `${table_name}.sql`;
       const sqlFilePath = path.join(schemaDir, sqlFileName);
@@ -73,6 +79,7 @@ export async function processDatabase(
         sql_file: path.join(schema_name, sqlFileName),
         references,
         columnInfo,
+        uniqueIndexes,
         statistics: {
           rowCount,
           plannerStats,

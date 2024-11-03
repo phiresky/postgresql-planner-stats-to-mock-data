@@ -4,6 +4,7 @@ import { ColumnStats } from "./queries";
 import { ColumnInfo } from "./queries";
 import { TableReference } from "./queries";
 import { loadConfig } from "../config";
+import { UniqueIndex } from "./constraints";
 
 export interface DatabaseMetadata {
   tables: TableDetails[];
@@ -17,6 +18,7 @@ export interface TableDetails {
   sql_file: string;
   references: TableReference[];
   columnInfo: ColumnInfo[];
+  uniqueIndexes: UniqueIndex[];
   statistics: {
     rowCount: number;
     plannerStats: ColumnStats[];

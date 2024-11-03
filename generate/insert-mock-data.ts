@@ -9,6 +9,7 @@ import {
   isExcludedTable,
 } from "../read/constants";
 import { generateValue } from "./value-sampler";
+import { UniqueIndexTracker } from "../read/constraints";
 
 const foreignKeyCache = new Map<string, any[]>();
 
@@ -138,56 +139,103 @@ async function generateRowData(
   table: TableDetails,
   config: Config,
   prodFraction: number,
+  indexTrackers: UniqueIndexTracker[],
   foreignKeyData: Map<string, any[]>
 ): Promise<Record<string, any>[]> {
   const targetRowCount = Math.ceil(table.statistics.rowCount * prodFraction);
   const rows: Record<string, any>[] = [];
 
-  for (let i = 0; i < targetRowCount; i++) {
+  const MAX_ATTEMPTS = 100;
+  let totalAttempts = 0;
+
+  while (
+    rows.length < targetRowCount &&
+    totalAttempts < targetRowCount * MAX_ATTEMPTS
+  ) {
     const row: Record<string, any> = {};
+    let isValid = false;
+    let attempts = 0;
 
-    for (const column of table.columnInfo) {
-      if (column.is_generated !== "NEVER") continue;
-      if (
-        isExcludedColumn(
-          config,
-          table.schema_name,
-          table.table_name,
-          column.column_name
+    while (!isValid && attempts < MAX_ATTEMPTS) {
+      // Generate values for all columns
+      for (const column of table.columnInfo) {
+        if (column.is_generated !== "NEVER") continue;
+        if (
+          isExcludedColumn(
+            config,
+            table.schema_name,
+            table.table_name,
+            column.column_name
+          )
         )
-      )
-        continue;
-      // Skip auto-incrementing columns
-      if (
-        column.column_default?.includes("nextval(") ||
-        column.data_type.toLowerCase().includes("serial")
-      ) {
-        continue;
+          continue;
+        // Skip identity and serial columns
+        if (
+          column.column_default?.includes("nextval(") ||
+          column.data_type.toLowerCase().includes("serial")
+        ) {
+          continue;
+        }
+
+        const stats = table.statistics.plannerStats.find(
+          (s) => s.column_name === column.column_name
+        );
+
+        if (!stats) {
+          console.warn(`No statistics found for column ${column.column_name}`);
+          continue;
+        }
+
+        const fkReference = table.references.find((ref) =>
+          ref.referencing_columns.includes(column.column_name)
+        );
+
+        const fkValues = fkReference
+          ? foreignKeyData.get(
+              `${fkReference.referenced_schema}.${fkReference.referenced_table}`
+            ) ?? null
+          : null;
+
+        row[column.column_name] = generateValue(
+          column,
+          stats,
+          fkValues,
+          config
+        );
       }
 
-      const stats = table.statistics.plannerStats.find(
-        (s) => s.column_name === column.column_name
+      // Check if row satisfies all unique indexes
+      isValid = indexTrackers.every((tracker) => tracker.isUnique(row));
+      attempts++;
+      totalAttempts++;
+    }
+
+    if (!isValid) {
+      const failedIndexes = indexTrackers
+        .filter((tracker) => !tracker.isUnique(row))
+        .map(
+          (tracker) =>
+            `${tracker.getIndexName()} (${tracker.getColumnNames().join(", ")})`
+        );
+
+      throw new Error(
+        `Unable to generate unique values for table ${table.schema_name}.${table.table_name} ` +
+          `after ${attempts} attempts. Failed indexes: ${failedIndexes.join(
+            "; "
+          )}. ` +
+          `Consider reducing prodFraction or expanding the value space.`
       );
-
-      if (!stats) {
-        console.warn(`No statistics found for column ${column.column_name}`);
-        continue;
-      }
-
-      const fkReference = table.references.find((ref) =>
-        ref.referencing_columns.includes(column.column_name)
-      );
-
-      const fkValues = fkReference
-        ? foreignKeyData.get(
-            `${fkReference.referenced_schema}.${fkReference.referenced_table}`
-          ) ?? null
-        : null;
-
-      row[column.column_name] = generateValue(column, stats, fkValues, config);
     }
 
     rows.push(row);
+  }
+
+  if (rows.length < targetRowCount) {
+    throw new Error(
+      `Could not generate enough unique rows for table ${table.schema_name}.${table.table_name}. ` +
+        `Generated ${rows.length}/${targetRowCount} rows after ${totalAttempts} attempts. ` +
+        `Consider reducing prodFraction or expanding the value space.`
+    );
   }
 
   return rows;
@@ -272,12 +320,20 @@ async function generateTableData(
     table.statistics.rowCount * config.config.prodFraction
   );
 
+  // Get unique indexes that we need to respect
+  const uniqueIndexes = table.uniqueIndexes;
+
+  const indexTrackers = uniqueIndexes.map(
+    (index) => new UniqueIndexTracker(index, index.is_primary)
+  );
+
   for (let i = 0; i < targetRows; i += batchSize) {
     const currentBatchSize = Math.min(batchSize, targetRows - i);
     const rows = await generateRowData(
       table,
       config,
       currentBatchSize / table.statistics.rowCount,
+      indexTrackers,
       foreignKeyData
     );
     await insertRows(
