@@ -28,8 +28,25 @@ export interface Config {
 
 export type ExcludedColumn = {
   column: string;
+} & ({
+  /** Skip this column entirely when generating mock data */
   strategy: "skip";
-};
+} | {
+  /** Override the column's statistics with custom values instead of sampling from real data */
+  strategy: "override";
+  /** The statistics to use for this column */
+  stats: {
+    /** Fixed values to use instead of sampling. For example ["<hidden>"] for sensitive data */
+    most_common_vals: unknown[];
+    /** Frequency of each value in most_common_vals. Must sum to 1 or less.
+     * Each value represents the probability of selecting the corresponding value from most_common_vals.
+     * For example, [1.0] means always use the first value, [0.7, 0.3] means 70% chance of first value, 30% chance of second.
+     */
+    most_common_freqs: number[];
+    /** Optional fraction of NULL values (0-1). Defaults to 0 if not specified. */
+    null_frac?: number;
+  };
+});
 
 export async function loadConfig(
   configPath?: string

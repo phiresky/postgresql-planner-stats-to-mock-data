@@ -160,15 +160,18 @@ async function generateRowData(
       // Generate values for all columns
       for (const column of table.columnInfo) {
         if (column.is_generated !== "NEVER") continue;
-        if (
-          isExcludedColumn(
-            config,
-            table.schema_name,
-            table.table_name,
-            column.column_name
-          )
-        )
-          continue;
+        
+        // Check if column is excluded
+        const excludedConfig = isExcludedColumn(
+          config,
+          table.schema_name,
+          table.table_name,
+          column.column_name
+        );
+
+        // Skip excluded columns
+        if (excludedConfig?.strategy === "skip") continue;
+
         // Skip identity and serial columns
         if (
           column.column_default?.includes("nextval(") ||
@@ -196,9 +199,19 @@ async function generateRowData(
             ) ?? null
           : null;
 
+        // If column has override stats, use those instead of the real stats
+        const statsToUse = excludedConfig?.strategy === "override"
+          ? {
+              ...stats,
+              most_common_vals: excludedConfig.stats.most_common_vals,
+              most_common_freqs: excludedConfig.stats.most_common_freqs,
+              null_frac: excludedConfig.stats.null_frac ?? stats.null_frac
+            }
+          : stats;
+
         row[column.column_name] = generateValue(
           column,
-          stats,
+          statsToUse,
           fkValues,
           config
         );
